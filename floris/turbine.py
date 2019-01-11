@@ -10,7 +10,7 @@
 # specific language governing permissions and limitations under the License.
 
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, interp2d
 from scipy.interpolate import griddata
 
 class Turbine():
@@ -55,6 +55,8 @@ class Turbine():
     """
 
     def __init__(self, instance_dictionary):
+
+        super().__init__()
 
         # constants
         self.grid_point_count = 16
@@ -158,8 +160,8 @@ class Turbine():
         ct = self.power_thrust_table["thrust"]
         windspeed = self.power_thrust_table["wind_speed"]
 
-        fCpInterp = interp1d(windspeed, cp, fill_value='extrapolate')
-        fCtInterp = interp1d(windspeed, ct, fill_value='extrapolate')
+        fCpInterp = interp1d(windspeed, cp)
+        fCtInterp = interp1d(windspeed, ct)
 
         def fCp(Ws):
             return max(cp) if Ws < min(windspeed) else fCpInterp(Ws)
@@ -185,10 +187,7 @@ class Turbine():
         dist = [np.sqrt( (coord.x - x_grid)**2 + (coord.y+yPts[i] - y_grid)**2 + (self.hub_height+zPts[i] - z_grid)**2  ) for i in range(len(yPts))]
 
         idx = [np.where(dist[i]==np.min(dist[i])) for i in range(len(yPts))]
-        
         data = [u_at_turbine[idx[i]] for i in range(len(yPts))]
-
-        data = [np.mean(u_at_turbine[idx[i]]) for i in range(len(yPts))]
 
         return np.array(data)
 
@@ -233,6 +232,53 @@ class Turbine():
 
         return np.sqrt(ti_calculation**2 + self.turbulence_intensity**2)
 
+    # individual functions for loads
+    def _diff_half(self):
+
+        yPts = np.array([point[0] for point in self.grid])
+        vel_half1 = self.velocities[yPts > 0]
+        vel_half2 = self.velocities[yPts < 0]
+
+        return (np.mean(vel_half2)-np.mean(vel_half1))
+
+
+    def _spatial_std(self):
+        return np.std(self.velocities)
+
+    def _calculate_loads(self):#, area_overlap):
+
+        # compute the loads based on:
+        #   -turbulence intensity (rotor averaged turbulence intensity)
+        #   -wake overlap (potentially gradient across wind turbine... horizontal shear, double integral, linear approximation, etc.)
+        #   -wind speed (rotor averaged wind speed)
+        #   -thrust coefficient (based on rotor averaged thrust)
+        #   Future work: yaw misalignment
+
+        # place holder for loads
+        # since there aren't very many loads we are trying to estimate, all of them can be calculated at once
+        loads = {}
+
+        x0 = self.get_average_velocity()
+        x1 = self.turbulence_intensity
+        x2 = self._spatial_std()
+
+        # Compute certain loads
+        flap = 328.95436736 * x0 + 2302.19640733 *x2  -1312.3567263543023
+        dt = 67.10114816 * x0 + 37.40466169 *x1  -420.8451807048049
+        tow = -1032.52606333* x0 + 11978.24658772 *x2  + 10099.192383198206
+
+        # define this above for a measure of asymmetry using self.velocities (the locations in self.grid)
+        
+        # x3 = self.Ct
+
+        # individual functions for each load (right now, just a linear combination of average rotor velocity, ti, asymmetry, and Ct)
+        #loads.DEL = dict()
+        #loads.DEL['XXX'] = x0 + x1 + x2 + x3 
+        #loads.DEL['XXX'] = x0 + x1 + x2 + x3 
+
+
+        return flap, dt, tow
+
     def update_quantities(self, u_wake, coord, flowfield, rotated_x, rotated_y, rotated_z):
 
         # extract relevant quantities
@@ -248,7 +294,7 @@ class Turbine():
                                         rotated_y,
                                         rotated_z)
             self.velocities = self._calculate_swept_area_velocities_visualization(
-                                        flowfield.grid_resolution,
+                flowfield.grid_resolution,
                                         local_wind_speed,
                                         coord,
                                         rotated_x,
@@ -269,10 +315,13 @@ class Turbine():
                                         rotated_x,
                                         rotated_y,
                                         rotated_z)
-        self.Cp = self._calculate_cp()
-        self.Ct = self._calculate_ct()
+        #self.Cp = self._calculate_cp()
+        #self.Ct = self._calculate_ct()
+        self.Cp = self._cp_pitch()
+        self.Ct = self._ct_pitch()
         self.power = self._calculate_power()
         self.aI = self._calculate_ai()
+        self.flap, self.dt, self.tow = self._calculate_loads()
 
     def set_yaw_angle(self, angle):
         """
@@ -288,3 +337,65 @@ class Turbine():
 
     def get_average_velocity(self):
         return np.mean(self.velocities)
+
+    def _ct_pitch(self):
+        Ct = [0.820707172, 0.813335284, 0.811414582, 0.811926793, 0.811680909, 0.811583821, 0.811567464, 0.810653645, 0.768326153, 0.808381698, 0.890632335, 0.941170227, 0.973268287,
+              0.789707172, 0.781335284, 0.780414582, 0.779926793, 0.779680909, 0.779883821, 0.779967464, 0.780053645, 0.741026153, 0.771881698, 0.856332335, 0.907470227, 0.941868287,
+              0.756707172, 0.749335284, 0.747414582, 0.746926793, 0.747280909, 0.747283821, 0.747367464, 0.747353645, 0.713526153, 0.732481698, 0.816432335, 0.866670227, 0.901268287,
+              0.723707172, 0.716335284, 0.714414582, 0.713926793, 0.713880909, 0.713983821, 0.714067464, 0.714153645, 0.685526153, 0.691381698, 0.772232335, 0.819770227, 0.851668287,
+              0.689707172, 0.682335284, 0.680414582, 0.679926793, 0.680280909, 0.680283821, 0.680267464, 0.680453645, 0.657326153, 0.649381698, 0.725632335, 0.768470227, 0.795668287,
+              0.655707172, 0.648335284, 0.647414582, 0.646726793, 0.646680909, 0.646583821, 0.646667464, 0.646653645, 0.629026153, 0.607981698, 0.678432335, 0.715370227, 0.736768287,
+              0.621707172, 0.615335284, 0.613414582, 0.613026793, 0.612880909, 0.612883821, 0.612867464, 0.612953645, 0.600526153, 0.579181698, 0.632532335, 0.662970227, 0.678368287,
+              0.586707172, 0.581335284, 0.579414582, 0.579526793, 0.579480909, 0.579483821, 0.579467464, 0.579353645, 0.572026153, 0.553481698, 0.588732335, 0.613170227, 0.622768287,
+              0.552707172, 0.548335284, 0.546414582, 0.546526793, 0.546280909, 0.546383821, 0.546367464, 0.546453645, 0.542726153, 0.528081698, 0.548132335, 0.567070227, 0.571768287,
+              0.519707172, 0.515335284, 0.514414582, 0.514226793, 0.514180909, 0.514083821, 0.514067464, 0.514053645, 0.513126153, 0.502381698, 0.510832335, 0.525170227, 0.525968287,
+              0.487707172, 0.484335284, 0.483214582, 0.483126793, 0.482880909, 0.482883821, 0.482967464, 0.482953645, 0.482826153, 0.476181698, 0.476632335, 0.487670227, 0.485368287]
+
+
+        Ct_n = np.array(Ct)
+        Ct_n = Ct_n.reshape(11,13)
+
+        wind_speed = np.array([3, 4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15])
+
+        pitch = np.array([0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5])
+
+        f = interp2d(wind_speed,pitch,Ct_n)
+
+        ct_val = f(self.get_average_velocity(),self.blade_pitch)
+
+        return ct_val 
+
+
+    def _cp_pitch(self):
+        Cp = [0.4973,    0.4825,  0.4802,  0.4799,  0.4799,  0.48,    0.4802,  0.4802,  0.4723,  0.48,    0.4755, 0.456,   0.4324,
+              0.4937,        0.4775,  0.4748,  0.4744,  0.4745,  0.4746,  0.4747,  0.4748,  0.466,   0.4735,  0.476,   0.4607,  0.4382,
+              0.4876,        0.4701,  0.4671,  0.4667,  0.4667,  0.4668,  0.4669,  0.467,   0.4582,  0.4636,  0.4726,  0.4618,  0.442,
+              0.4791,        0.4606,  0.4567,  0.4568,  0.4569,  0.4569,  0.4571,  0.4572,  0.4488,  0.4507,  0.4655,  0.4587,  0.4416,
+              0.4684,        0.4493,  0.4458,  0.4453,  0.4453,  0.4453,  0.4454,  0.4455,  0.4381,  0.435,   0.4545,  0.4511,  0.4364,
+              0.4556,        0.4364,  0.4328,  0.4321,  0.4321,  0.4322,  0.4323,  0.4324,  0.4261,  0.4173,  0.4403,  0.4394,  0.4266,
+              0.441,         0.422,   0.4184,  0.4177,  0.4177,  0.4177,  0.4178,  0.4179,  0.4132,  0.4038,  0.4236,  0.4243,  0.4131,
+              0.4249,        0.4063,  0.4027,  0.4021,  0.402,   0.4021,  0.4022,  0.4022,  0.3993,  0.3909,  0.4054,  0.4069,  0.3968,
+              0.4076,       0.3897, 0.3862,  0.3855,  0.3855,  0.3855,  0.3856,  0.3857,  0.3843,  0.3774,  0.3864,  0.3884,  0.3788,
+              0.3895,        0.3725,  0.3691,  0.3685,  0.3684,  0.3685,  0.3685,  0.3686,  0.3683,  0.3632,  0.3672,  0.3694,  0.3602,
+              0.3707,        0.3548,  0.3516, 0.3511,  0.351,   0.351,   0.3511,  0.3512,  0.3512, 0.3482,  0.3484,  0.3506,  0.3418]
+
+        Cp_n = np.array(Cp)
+        Cp_n = Cp_n.reshape(11,13)
+
+        wind_speed = np.array([3, 4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,  15])
+
+        pitch = np.array([0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5])
+
+        f = interp2d(wind_speed,pitch,Cp_n)
+
+        cp_val = f(self.get_average_velocity(),self.blade_pitch)
+
+        return cp_val
+
+    
+
+
+
+
+    # coefficients for loads
+
